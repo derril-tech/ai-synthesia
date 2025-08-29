@@ -1,0 +1,318 @@
+version: '3.8'
+
+services:
+  # API Service
+  api:
+    build:
+      context: ./apps/api
+      dockerfile: Dockerfile
+      target: production
+    image: synesthesia-ai/api:staging
+    container_name: synesthesia-api-staging
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=staging
+      - DATABASE_URL=postgresql://synesthesia:${POSTGRES_PASSWORD}@postgres:5432/synesthesia_staging
+      - REDIS_URL=redis://redis:6379/1
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - JWT_SECRET=${JWT_SECRET}
+      - SENTRY_DSN=${SENTRY_DSN}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - S3_BUCKET=${S3_BUCKET_STAGING}
+      - OPENSEARCH_URL=https://opensearch:9200
+      - OPENSEARCH_USERNAME=admin
+      - OPENSEARCH_PASSWORD=${OPENSEARCH_PASSWORD}
+    ports:
+      - "8001:8000"
+    depends_on:
+      - postgres
+      - redis
+      - opensearch
+    networks:
+      - synesthesia-staging
+    volumes:
+      - ./logs/api:/app/logs
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/v1/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Web Service
+  web:
+    build:
+      context: ./apps/web
+      dockerfile: Dockerfile
+      target: production
+    image: synesthesia-ai/web:staging
+    container_name: synesthesia-web-staging
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=staging
+      - NEXT_PUBLIC_API_URL=https://api-staging.synesthesia-ai.com
+      - NEXT_PUBLIC_SENTRY_DSN=${SENTRY_DSN}
+    ports:
+      - "3001:3000"
+    networks:
+      - synesthesia-staging
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Worker Services
+  narrative-worker:
+    build:
+      context: ./apps/workers
+      dockerfile: Dockerfile
+    image: synesthesia-ai/workers:staging
+    container_name: synesthesia-narrative-worker-staging
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=staging
+      - WORKER_TYPE=narrative
+      - DATABASE_URL=postgresql://synesthesia:${POSTGRES_PASSWORD}@postgres:5432/synesthesia_staging
+      - REDIS_URL=redis://redis:6379/1
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - NATS_URL=nats://nats:4222
+    depends_on:
+      - postgres
+      - redis
+      - nats
+    networks:
+      - synesthesia-staging
+    deploy:
+      replicas: 2
+
+  visual-worker:
+    build:
+      context: ./apps/workers
+      dockerfile: Dockerfile
+    image: synesthesia-ai/workers:staging
+    container_name: synesthesia-visual-worker-staging
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=staging
+      - WORKER_TYPE=visual
+      - DATABASE_URL=postgresql://synesthesia:${POSTGRES_PASSWORD}@postgres:5432/synesthesia_staging
+      - REDIS_URL=redis://redis:6379/1
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - NATS_URL=nats://nats:4222
+    depends_on:
+      - postgres
+      - redis
+      - nats
+    networks:
+      - synesthesia-staging
+    deploy:
+      replicas: 2
+
+  audio-worker:
+    build:
+      context: ./apps/workers
+      dockerfile: Dockerfile
+    image: synesthesia-ai/workers:staging
+    container_name: synesthesia-audio-worker-staging
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=staging
+      - WORKER_TYPE=audio
+      - DATABASE_URL=postgresql://synesthesia:${POSTGRES_PASSWORD}@postgres:5432/synesthesia_staging
+      - REDIS_URL=redis://redis:6379/1
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - NATS_URL=nats://nats:4222
+    depends_on:
+      - postgres
+      - redis
+      - nats
+    networks:
+      - synesthesia-staging
+    deploy:
+      replicas: 1
+
+  # Database
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: synesthesia-postgres-staging
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=synesthesia_staging
+      - POSTGRES_USER=synesthesia
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_staging_data:/var/lib/postgresql/data
+      - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql
+    networks:
+      - synesthesia-staging
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U synesthesia -d synesthesia_staging"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis
+  redis:
+    image: redis:7-alpine
+    container_name: synesthesia-redis-staging
+    restart: unless-stopped
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD}
+    ports:
+      - "6380:6379"
+    volumes:
+      - redis_staging_data:/data
+    networks:
+      - synesthesia-staging
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # OpenSearch
+  opensearch:
+    image: opensearchproject/opensearch:2.11.0
+    container_name: synesthesia-opensearch-staging
+    restart: unless-stopped
+    environment:
+      - cluster.name=synesthesia-staging
+      - node.name=opensearch-staging
+      - discovery.type=single-node
+      - bootstrap.memory_lock=true
+      - "OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m"
+      - "DISABLE_INSTALL_DEMO_CONFIG=true"
+      - "DISABLE_SECURITY_PLUGIN=false"
+      - "OPENSEARCH_INITIAL_ADMIN_PASSWORD=${OPENSEARCH_PASSWORD}"
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536
+        hard: 65536
+    ports:
+      - "9201:9200"
+      - "9601:9600"
+    volumes:
+      - opensearch_staging_data:/usr/share/opensearch/data
+    networks:
+      - synesthesia-staging
+    healthcheck:
+      test: ["CMD", "curl", "-f", "-u", "admin:${OPENSEARCH_PASSWORD}", "https://localhost:9200/_cluster/health?wait_for_status=yellow&timeout=50s", "-k"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # NATS
+  nats:
+    image: nats:2.10-alpine
+    container_name: synesthesia-nats-staging
+    restart: unless-stopped
+    command: 
+      - "--jetstream"
+      - "--store_dir=/data"
+      - "--max_memory_store=1GB"
+      - "--max_file_store=10GB"
+    ports:
+      - "4223:4222"
+      - "8223:8222"
+    volumes:
+      - nats_staging_data:/data
+    networks:
+      - synesthesia-staging
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8222/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Monitoring - Prometheus
+  prometheus:
+    image: prom/prometheus:v2.48.0
+    container_name: synesthesia-prometheus-staging
+    restart: unless-stopped
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=15d'
+      - '--web.enable-lifecycle'
+    ports:
+      - "9091:9090"
+    volumes:
+      - ./monitoring/prometheus-staging.yml:/etc/prometheus/prometheus.yml
+      - prometheus_staging_data:/prometheus
+    networks:
+      - synesthesia-staging
+    depends_on:
+      - api
+
+  # Monitoring - Grafana
+  grafana:
+    image: grafana/grafana:10.2.0
+    container_name: synesthesia-grafana-staging
+    restart: unless-stopped
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD}
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_INSTALL_PLUGINS=grafana-piechart-panel
+    ports:
+      - "3001:3000"
+    volumes:
+      - grafana_staging_data:/var/lib/grafana
+      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards
+      - ./monitoring/grafana/datasources:/etc/grafana/provisioning/datasources
+    networks:
+      - synesthesia-staging
+    depends_on:
+      - prometheus
+
+  # Load Balancer - Nginx
+  nginx:
+    image: nginx:1.25-alpine
+    container_name: synesthesia-nginx-staging
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/staging.conf:/etc/nginx/nginx.conf
+      - ./nginx/ssl:/etc/nginx/ssl
+      - ./logs/nginx:/var/log/nginx
+    networks:
+      - synesthesia-staging
+    depends_on:
+      - api
+      - web
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  postgres_staging_data:
+    driver: local
+  redis_staging_data:
+    driver: local
+  opensearch_staging_data:
+    driver: local
+  nats_staging_data:
+    driver: local
+  prometheus_staging_data:
+    driver: local
+  grafana_staging_data:
+    driver: local
+
+networks:
+  synesthesia-staging:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16

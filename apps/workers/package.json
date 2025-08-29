@@ -1,0 +1,38 @@
+{
+  "name": "@ai-synthesia/workers",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js",
+    "lint": "eslint src --ext .ts",
+    "type-check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@google-cloud/storage": "^7.7.0",
+    "@nats-io/jetstream": "^2.10.4",
+    "aws-sdk": "^2.1498.0",
+    "axios": "^1.6.2",
+    "dropbox": "^10.34.0",
+    "google-auth-library": "^9.4.0",
+    "googleapis": "^129.0.0",
+    "ioredis": "^5.3.2",
+    "notion-client": "^6.16.0",
+    "openai": "^4.20.1",
+    "pg": "^8.11.3",
+    "rss-parser": "^3.13.0",
+    "sharp": "^0.32.6",
+    "winston": "^3.11.0",
+    "youtube-dl-exec": "^2.4.13"
+  },
+  "devDependencies": {
+    "@types/node": "^20.9.0",
+    "@types/pg": "^8.10.9",
+    "@typescript-eslint/eslint-plugin": "^6.12.0",
+    "@typescript-eslint/parser": "^6.12.0",
+    "eslint": "^8.54.0",
+    "tsx": "^4.6.0",
+    "typescript": "^5.2.2"
+  }
+}

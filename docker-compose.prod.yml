@@ -1,0 +1,477 @@
+version: '3.8'
+
+services:
+  # API Service - Production
+  api:
+    build:
+      context: ./apps/api
+      dockerfile: Dockerfile
+      target: production
+    image: synesthesia-ai/api:${VERSION:-latest}
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgresql://synesthesia:${POSTGRES_PASSWORD}@postgres:5432/synesthesia_prod
+      - REDIS_URL=redis://redis:6379/0
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - JWT_SECRET=${JWT_SECRET}
+      - SENTRY_DSN=${SENTRY_DSN}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - S3_BUCKET=${S3_BUCKET_PROD}
+      - OPENSEARCH_URL=https://opensearch:9200
+      - OPENSEARCH_USERNAME=admin
+      - OPENSEARCH_PASSWORD=${OPENSEARCH_PASSWORD}
+      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_ENDPOINT}
+      - OTEL_EXPORTER_OTLP_HEADERS=api-key=${OTEL_API_KEY}
+    deploy:
+      replicas: 3
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 4G
+        reservations:
+          cpus: '1.0'
+          memory: 2G
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+        window: 120s
+      update_config:
+        parallelism: 1
+        delay: 30s
+        failure_action: rollback
+        order: start-first
+    depends_on:
+      - postgres
+      - redis
+      - opensearch
+    networks:
+      - synesthesia-prod
+    volumes:
+      - ./logs/api:/app/logs
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/v1/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Web Service - Production
+  web:
+    build:
+      context: ./apps/web
+      dockerfile: Dockerfile
+      target: production
+    image: synesthesia-ai/web:${VERSION:-latest}
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - NEXT_PUBLIC_API_URL=https://api.synesthesia-ai.com
+      - NEXT_PUBLIC_SENTRY_DSN=${SENTRY_DSN}
+      - NEXT_PUBLIC_ANALYTICS_ID=${ANALYTICS_ID}
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 1G
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+        window: 120s
+      update_config:
+        parallelism: 1
+        delay: 30s
+        failure_action: rollback
+        order: start-first
+    networks:
+      - synesthesia-prod
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Worker Services - Production Scale
+  narrative-worker:
+    build:
+      context: ./apps/workers
+      dockerfile: Dockerfile
+    image: synesthesia-ai/workers:${VERSION:-latest}
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - WORKER_TYPE=narrative
+      - DATABASE_URL=postgresql://synesthesia:${POSTGRES_PASSWORD}@postgres:5432/synesthesia_prod
+      - REDIS_URL=redis://redis:6379/0
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - NATS_URL=nats://nats:4222
+      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_ENDPOINT}
+      - OTEL_EXPORTER_OTLP_HEADERS=api-key=${OTEL_API_KEY}
+    deploy:
+      replicas: 4
+      resources:
+        limits:
+          cpus: '1.5'
+          memory: 3G
+        reservations:
+          cpus: '0.5'
+          memory: 1G
+      restart_policy:
+        condition: on-failure
+        delay: 10s
+        max_attempts: 3
+        window: 120s
+    depends_on:
+      - postgres
+      - redis
+      - nats
+    networks:
+      - synesthesia-prod
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  visual-worker:
+    build:
+      context: ./apps/workers
+      dockerfile: Dockerfile
+    image: synesthesia-ai/workers:${VERSION:-latest}
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - WORKER_TYPE=visual
+      - DATABASE_URL=postgresql://synesthesia:${POSTGRES_PASSWORD}@postgres:5432/synesthesia_prod
+      - REDIS_URL=redis://redis:6379/0
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - NATS_URL=nats://nats:4222
+      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_ENDPOINT}
+      - OTEL_EXPORTER_OTLP_HEADERS=api-key=${OTEL_API_KEY}
+    deploy:
+      replicas: 3
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 4G
+        reservations:
+          cpus: '1.0'
+          memory: 2G
+      restart_policy:
+        condition: on-failure
+        delay: 10s
+        max_attempts: 3
+        window: 120s
+    depends_on:
+      - postgres
+      - redis
+      - nats
+    networks:
+      - synesthesia-prod
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  audio-worker:
+    build:
+      context: ./apps/workers
+      dockerfile: Dockerfile
+    image: synesthesia-ai/workers:${VERSION:-latest}
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - WORKER_TYPE=audio
+      - DATABASE_URL=postgresql://synesthesia:${POSTGRES_PASSWORD}@postgres:5432/synesthesia_prod
+      - REDIS_URL=redis://redis:6379/0
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - NATS_URL=nats://nats:4222
+      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_ENDPOINT}
+      - OTEL_EXPORTER_OTLP_HEADERS=api-key=${OTEL_API_KEY}
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          cpus: '1.5'
+          memory: 3G
+        reservations:
+          cpus: '0.5'
+          memory: 1G
+      restart_policy:
+        condition: on-failure
+        delay: 10s
+        max_attempts: 3
+        window: 120s
+    depends_on:
+      - postgres
+      - redis
+      - nats
+    networks:
+      - synesthesia-prod
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Database - Production with High Availability
+  postgres:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=synesthesia_prod
+      - POSTGRES_USER=synesthesia
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_INITDB_ARGS=--auth-host=scram-sha-256
+    deploy:
+      resources:
+        limits:
+          cpus: '4.0'
+          memory: 8G
+        reservations:
+          cpus: '2.0'
+          memory: 4G
+    volumes:
+      - postgres_prod_data:/var/lib/postgresql/data
+      - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql
+      - ./backups/postgres:/backups
+    networks:
+      - synesthesia-prod
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U synesthesia -d synesthesia_prod"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Redis - Production with Persistence
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: >
+      redis-server 
+      --appendonly yes 
+      --requirepass ${REDIS_PASSWORD}
+      --maxmemory 2gb
+      --maxmemory-policy allkeys-lru
+      --save 900 1
+      --save 300 10
+      --save 60 10000
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 4G
+        reservations:
+          cpus: '0.5'
+          memory: 2G
+    volumes:
+      - redis_prod_data:/data
+      - ./backups/redis:/backups
+    networks:
+      - synesthesia-prod
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # OpenSearch - Production Cluster
+  opensearch:
+    image: opensearchproject/opensearch:2.11.0
+    restart: unless-stopped
+    environment:
+      - cluster.name=synesthesia-prod
+      - node.name=opensearch-prod
+      - discovery.type=single-node
+      - bootstrap.memory_lock=true
+      - "OPENSEARCH_JAVA_OPTS=-Xms2g -Xmx2g"
+      - "DISABLE_INSTALL_DEMO_CONFIG=true"
+      - "DISABLE_SECURITY_PLUGIN=false"
+      - "OPENSEARCH_INITIAL_ADMIN_PASSWORD=${OPENSEARCH_PASSWORD}"
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536
+        hard: 65536
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 4G
+        reservations:
+          cpus: '1.0'
+          memory: 2G
+    volumes:
+      - opensearch_prod_data:/usr/share/opensearch/data
+      - ./backups/opensearch:/backups
+    networks:
+      - synesthesia-prod
+    healthcheck:
+      test: ["CMD", "curl", "-f", "-u", "admin:${OPENSEARCH_PASSWORD}", "https://localhost:9200/_cluster/health?wait_for_status=yellow&timeout=50s", "-k"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # NATS - Production with Clustering
+  nats:
+    image: nats:2.10-alpine
+    restart: unless-stopped
+    command: 
+      - "--jetstream"
+      - "--store_dir=/data"
+      - "--max_memory_store=2GB"
+      - "--max_file_store=20GB"
+      - "--cluster_name=synesthesia-prod"
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 1G
+    volumes:
+      - nats_prod_data:/data
+      - ./backups/nats:/backups
+    networks:
+      - synesthesia-prod
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8222/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Load Balancer - Production Nginx
+  nginx:
+    image: nginx:1.25-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/prod.conf:/etc/nginx/nginx.conf
+      - ./nginx/ssl:/etc/nginx/ssl
+      - ./logs/nginx:/var/log/nginx
+    networks:
+      - synesthesia-prod
+    depends_on:
+      - api
+      - web
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Backup Service
+  backup:
+    image: alpine:3.18
+    restart: "no"
+    environment:
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - S3_BACKUP_BUCKET=${S3_BACKUP_BUCKET}
+    volumes:
+      - postgres_prod_data:/var/lib/postgresql/data:ro
+      - redis_prod_data:/var/lib/redis/data:ro
+      - opensearch_prod_data:/var/lib/opensearch/data:ro
+      - ./backups:/backups
+      - ./scripts/backup.sh:/backup.sh
+    networks:
+      - synesthesia-prod
+    depends_on:
+      - postgres
+      - redis
+      - opensearch
+    command: ["/backup.sh"]
+    deploy:
+      restart_policy:
+        condition: none
+
+volumes:
+  postgres_prod_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /opt/synesthesia/data/postgres
+  redis_prod_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /opt/synesthesia/data/redis
+  opensearch_prod_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /opt/synesthesia/data/opensearch
+  nats_prod_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /opt/synesthesia/data/nats
+
+networks:
+  synesthesia-prod:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.30.0.0/16
